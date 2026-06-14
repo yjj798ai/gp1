@@ -334,15 +334,18 @@ def _render_evolution_records():
         accuracy_stats = _load_accuracy_stats()
 
         # 样式映射
-        styled_df = log_df.style.map(
-            lambda v: "color: green; font-weight: bold;" if "✅" in str(v) else (
-                "color: red; font-weight: bold;" if "❌" in str(v) else ""),
-            subset=["是否正确"]
-        ).map(
-            lambda v: "color: green; font-weight: bold;" if float(v) > 0 else (
-                "color: red; font-weight: bold;" if float(v) < 0 else ""),
-            subset=["实际涨跌幅(%)"]
-        )
+        if not log_df.empty and "是否正确" in log_df.columns:
+            styled_df = log_df.style.map(
+                lambda v: "color: green; font-weight: bold;" if "✅" in str(v) else (
+                    "color: red; font-weight: bold;" if "❌" in str(v) else ""),
+                subset=["是否正确"]
+            ).map(
+                lambda v: "color: green; font-weight: bold;" if float(v) > 0 else (
+                    "color: red; font-weight: bold;" if float(v) < 0 else ""),
+                subset=["实际涨跌幅(%)"]
+            )
+        else:
+            styled_df = log_df
 
         # 股票名称加超链接（HTML表格方式）
         if "股票代码" in log_df.columns and "股票名称" in log_df.columns:
@@ -359,7 +362,10 @@ def _render_evolution_records():
 
         # 准确率统计卡片
         st.subheader("准确率统计")
-        correct_count = len(log_df[log_df["是否正确"].str.contains("✅")])
+        if not log_df.empty and "是否正确" in log_df.columns:
+            correct_count = len(log_df[log_df["是否正确"].str.contains("✅")])
+        else:
+            correct_count = 0
         total_count = len(log_df)
 
         col1, col2, col3 = st.columns(3)

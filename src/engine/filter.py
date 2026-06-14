@@ -374,7 +374,7 @@ def run_dual_pipeline(top_n: int = 15):
             reason_parts = []
             if concept_factors.get('concepts'):
                 reason_parts.append("概念: " + "/".join(concept_factors['concepts'][:2]))
-            if concept_factors.get('freshness'):
+            if concept_factors.get('freshness') and concept_factors['freshness'] != '未知':
                 reason_parts.append(concept_factors['freshness'])
             if tech_factors:
                 # 找最高分因子

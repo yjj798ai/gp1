@@ -136,7 +136,7 @@ elif page == "🎯 智能推荐":
 elif page == "🌙 尾盘选股":
     from src.pages.late_session import render_late_session
     render_late_session()
-elif page == "🔄 板块轮动":
+elif page == "🔄 概念轮动":
     from src.pages.sector_rotation import render_sector_rotation
     render_sector_rotation()
 elif page == "📈 概念热力图":

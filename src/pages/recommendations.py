@@ -102,10 +102,10 @@ def render_recommendations():
     has_dual_scores = has_dual and "概念评分" in recommendations.columns and "技术评分" in recommendations.columns
 
     if has_dual_scores:
-        display_cols = ["股票代码", "股票名称", "当前价格", "所属板块", "关联概念",
+        display_cols = ["股票名称", "股票代码", "当前价格", "所属板块", "关联概念",
                          "概念评分", "技术评分", "综合评分", "辩论方法", "推荐理由"]
     else:
-        display_cols = ["股票代码", "股票名称", "当前价格", "所属板块", "关联概念",
+        display_cols = ["股票名称", "股票代码", "当前价格", "所属板块", "关联概念",
                          "综合评分", "推荐理由"]
     display_cols = [c for c in display_cols if c in recommendations.columns]
 
@@ -125,6 +125,7 @@ def render_recommendations():
         "名称": st.column_config.LinkColumn("名称", width=110, display_text=r"#(.*)$"),
         "股票名称": None,
         "当前价格": st.column_config.NumberColumn("价格", format="¥%.2f", width=70),
+        "所属板块": st.column_config.TextColumn("板块", width=90),
         "触发概念": st.column_config.TextColumn("触发概念", width=100),
         "关联概念": st.column_config.TextColumn("关联概念", width=130),
         "综合评分": st.column_config.NumberColumn("综合评分", format="%.1f", width=70),

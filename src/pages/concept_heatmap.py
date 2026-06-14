@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 概念热力图 — 7天概念热度变化可视化
-从FastAPI迁移：/api/concept-heatmap + /api/concept-detail
+横向条形图：热的长冷的短，直观清晰
 """
 import streamlit as st
 import pandas as pd
@@ -18,40 +18,69 @@ def _connect():
 
 
 @st.cache_data(ttl=300)
-def load_heatmap_data():
-    """加载7天概念热度数据"""
+def load_concept_bars():
+    """加载最新概念热度数据，用于条形图"""
     conn = _connect()
     rows = conn.execute("""
-        SELECT date, name, rate, rise_and_fall
+        SELECT name, rate, rise_and_fall, hot_tag, days_on_list
         FROM ths_concept_rank
-        WHERE date >= date('now', '-7 days')
-        ORDER BY date, rate DESC
+        WHERE date = (SELECT MAX(date) FROM ths_concept_rank)
+        ORDER BY rate DESC LIMIT 25
     """).fetchall()
     conn.close()
 
     if not rows:
-        return None, None, None
+        return None
 
-    dates = sorted(set(r[0] for r in rows))
-    concepts = sorted(set(r[1] for r in rows))
+    records = []
+    for r in rows:
+        days = int(r['days_on_list'] or 0)
+        if days == 0:
+            stage = "🆕新"
+        elif days <= 5:
+            stage = "🔥爆发"
+        elif days <= 30:
+            stage = "📈成长"
+        else:
+            stage = "⏳老"
 
-    values = []
-    for concept in concepts:
-        row = []
-        for date in dates:
-            match = [r for r in rows if r[0] == date and r[1] == concept]
-            if match:
-                row.append(round(float(match[0][2] or 0), 1))
-            else:
-                row.append(0)
-        values.append(row)
+        records.append({
+            "概念": r['name'],
+            "热度": float(r['rate'] or 0),
+            "涨跌幅": float(r['rise_and_fall'] or 0),
+            "标签": r['hot_tag'] or "",
+            "上榜天数": days,
+            "阶段": stage,
+        })
 
-    return dates, concepts[:20], values[:20]
+    return pd.DataFrame(records)
+
+
+@st.cache_data(ttl=300)
+def load_concept_trend():
+    """加载7天概念热度趋势"""
+    conn = _connect()
+    rows = conn.execute("""
+        SELECT date, name, rate
+        FROM ths_concept_rank
+        WHERE date >= date('now', '-7 days')
+          AND name IN (SELECT name FROM ths_concept_rank
+                       WHERE date = (SELECT MAX(date) FROM ths_concept_rank)
+                       ORDER BY rate DESC LIMIT 10)
+        ORDER BY date, name
+    """).fetchall()
+    conn.close()
+
+    if not rows:
+        return None
+
+    df = pd.DataFrame(rows, columns=["日期", "概念", "热度"])
+    return df.pivot_table(index="概念", columns="日期", values="热度", fill_value=0)
 
 
 @st.cache_data(ttl=300)
 def load_concept_detail(keyword):
-    """加载概念详情：排行+资金流+关联股票"""
+    """加载概念详情"""
     conn = _connect()
 
     ths = conn.execute("""
@@ -70,7 +99,7 @@ def load_concept_detail(keyword):
         JOIN stock_concepts sc ON s.code = sc.code
         WHERE sc.concept LIKE ?
         ORDER BY s.change_pct DESC
-        LIMIT 20
+        LIMIT 15
     """, (f'%{keyword}%',)).fetchall()
 
     conn.close()
@@ -83,38 +112,90 @@ def load_concept_detail(keyword):
 
 
 def render_concept_heatmap():
-    """渲染概念热力图页面"""
-    st.title("概念热力图")
-    st.caption("7天概念热度变化 | 同花顺概念排名数据")
-    st.divider()
+    """渲染概念热度页面"""
+    st.title("概念热度")
+    st.caption("热度越高条越长 | 颜色越深越热")
 
-    dates, concepts, values = load_heatmap_data()
-
-    if not dates or not concepts:
-        st.warning("暂无概念热力图数据，请等待采集")
+    df = load_concept_bars()
+    if df is None or df.empty:
+        st.warning("暂无数据，请等待采集")
         return
 
-    # ── 热力图 ──
-    fig = go.Figure(data=go.Heatmap(
-        z=values,
-        x=dates,
-        y=concepts,
-        colorscale='RdYlGn',
-        text=values,
-        texttemplate='%{text:.0f}',
-        textfont={"size": 10},
-        hovertemplate='概念: %{y}<br>日期: %{x}<br>热度: %{z:.0f}<extra></extra>',
+    # ── 主图：横向条形图 ──
+    st.subheader("今日概念热度 TOP25")
+
+    # 按热度排序，热的在上面
+    df_sorted = df.sort_values("热度", ascending=True)
+
+    # 颜色：热度越高越红
+    max_rate = df_sorted["热度"].max()
+    colors = []
+    for v in df_sorted["热度"]:
+        ratio = v / max_rate if max_rate > 0 else 0
+        if ratio > 0.7:
+            colors.append("#E53935")  # 红
+        elif ratio > 0.4:
+            colors.append("#FB8C00")  # 橙
+        elif ratio > 0.2:
+            colors.append("#FDD835")  # 黄
+        else:
+            colors.append("#66BB6A")  # 绿
+
+    fig = go.Figure(go.Bar(
+        x=df_sorted["热度"],
+        y=df_sorted["概念"],
+        orientation="h",
+        marker_color=colors,
+        text=df_sorted.apply(lambda r: f'{r["热度"]:.0f}  {r["阶段"]}  {r["涨跌幅"]:+.1f}%', axis=1),
+        textposition="outside",
+        textfont=dict(size=11),
+        hovertemplate="概念: %{y}<br>热度: %{x:.0f}<br>涨跌: %{customdata:+.2f}%<extra></extra>",
+        customdata=df_sorted["涨跌幅"],
     ))
 
     fig.update_layout(
-        xaxis_title="日期",
-        yaxis_title="概念",
-        height=500,
-        margin=dict(l=120, r=30, t=30, b=50),
+        height=max(400, len(df_sorted) * 28),
+        margin=dict(l=100, r=80, t=10, b=30),
+        xaxis_title="热度值",
         yaxis=dict(autorange="reversed"),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # ── 图例说明 ──
+    st.caption("🟢冷(0-20)  🟡温(20-50)  🟠热(50-80)  🔴火爆(80+) | 🆕新概念  🔥爆发  📈成长  ⏳老概念")
+
+    st.divider()
+
+    # ── 7天趋势 ──
+    st.subheader("TOP10 概念 7天趋势")
+    trend = load_concept_trend()
+    if trend is not None and not trend.empty:
+        fig2 = go.Figure()
+        for concept in trend.index:
+            fig2.add_trace(go.Scatter(
+                x=trend.columns,
+                y=trend.loc[concept].values,
+                mode="lines+markers",
+                name=concept,
+                line=dict(width=2),
+                marker=dict(size=6),
+            ))
+
+        fig2.update_layout(
+            height=400,
+            margin=dict(l=40, r=20, t=20, b=40),
+            xaxis_title="日期",
+            yaxis_title="热度值",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+    else:
+        st.info("暂无7天趋势数据")
 
     st.divider()
 
@@ -126,35 +207,34 @@ def render_concept_heatmap():
         detail = load_concept_detail(keyword)
 
         if not detail['ths_rank'] and not detail['xgt_fund']:
-            st.info(f"未找到概念「{keyword}」的相关数据")
+            st.info(f"未找到概念「{keyword}」的数据")
             return
 
         col1, col2 = st.columns(2)
 
         with col1:
-            st.markdown("**同花顺概念排名**")
+            st.markdown("**同花顺**")
             if detail['ths_rank']:
                 ths = detail['ths_rank']
-                st.metric("热度排名", f"{ths.get('rate', 0):.0f}")
-                st.metric("涨跌", f"{ths.get('rise_and_fall', 0):+.2f}%")
-                st.caption(f"标签: {ths.get('hot_tag', '-')} | 上榜天数: {ths.get('days_on_list', '-')}")
+                st.metric("热度", f"{float(ths.get('rate', 0) or 0):.0f}")
+                st.metric("涨跌", f"{float(ths.get('rise_and_fall', 0) or 0):+.2f}%")
+                st.caption(f"{ths.get('hot_tag', '-')} | 上榜{ths.get('days_on_list', '-')}天")
             else:
-                st.info("无同花顺数据")
+                st.info("无数据")
 
         with col2:
-            st.markdown("**选股通资金流**")
+            st.markdown("**选股通**")
             if detail['xgt_fund']:
                 xgt = detail['xgt_fund']
-                st.metric("今日资金流", f"{float(xgt.get('fund_flow_today', 0) or 0):+.2f}亿")
-                st.metric("涨停数", f"{xgt.get('limit_up', 0)}")
-                st.caption(f"领涨: {xgt.get('leader', '-')} | 涨跌: {xgt.get('up_down', '-')}")
+                st.metric("资金流", f"{float(xgt.get('fund_flow_today', 0) or 0):+.2f}亿")
+                st.metric("涨停", f"{xgt.get('limit_up', 0)}家")
+                st.caption(f"领涨: {xgt.get('leader', '-')}")
             else:
-                st.info("无选股通数据")
+                st.info("无数据")
 
         if detail['stocks']:
             st.markdown("**关联个股**")
-            stocks_df = pd.DataFrame(detail['stocks'])
-            st.dataframe(stocks_df, use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(detail['stocks']), use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":
